@@ -1,0 +1,19 @@
+{
+  "name": "@mhesus/mcbe-database",
+  "version": "1.0.0",
+  "description": "A library that implements a simple JSON-based database into minecraft bedrock utilising dynamic properties.",
+  "main": "index.js",
+  "scripts": {
+    "prepack": "npm run build",
+    "build": "rimraf build && tsc",
+    "test": "ts-node tests/main.ts"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@minecraft/server": "^1.7.0",
+    "rimraf": "^5.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
