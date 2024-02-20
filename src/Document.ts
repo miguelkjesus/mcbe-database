@@ -1,5 +1,9 @@
 import { Entity, World, world } from "@minecraft/server";
 
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // TODO: add value splitting across multiple keys to store large values
 
 let ownerIdDocumentMap = new Map<string, Document>();
@@ -28,11 +32,52 @@ export class Document {
     return document;
   }
 
+  private setEncoded(key: string, encodedValue: string): void {
+    let chunkStart = 0;
+    let chunkEnd = 0;
+    let chunkId = 0;
+
+    while (chunkStart < encodedValue.length) {
+      // get next chunk
+      chunkEnd = Math.min(
+        encodedValue.length,
+        chunkStart + Document.MAX_DYNAMIC_PROPERTY_SIZE
+      );
+      let chunk = encodedValue.slice(chunkStart, chunkEnd);
+      chunkStart = chunkEnd;
+
+      // set chunk
+      this.owner.setDynamicProperty(`${key}_${chunkId}`, chunk);
+      chunkId++;
+    }
+  }
+
+  private getChunkIds(key: string): string[] {
+    let escapedKey = escapeRegExp(key);
+    let keyPattern = new RegExp(`^${escapedKey}_\\d+$`);
+    return this.owner
+      .getDynamicPropertyIds()
+      .filter((propId) => keyPattern.test(propId));
+  }
+
+  private getEncoded(key: string): string | undefined {
+    let ids = this.getChunkIds(key);
+
+    if (ids.length === 0) {
+      return undefined;
+    } else {
+      return ids.reduce(
+        (data, id) => data + this.owner.getDynamicProperty(id),
+        ""
+      );
+    }
+  }
+
   get<T = unknown>(
     key: string,
     decoder?: (encodedValue: string) => T
   ): T | undefined {
-    const encodedValue = this.owner.getDynamicProperty(key);
+    const encodedValue = this.getEncoded(key);
 
     if (encodedValue === undefined) return undefined;
 
@@ -61,7 +106,7 @@ export class Document {
         `The encoded value must be less than ${Document.MAX_DYNAMIC_PROPERTY_SIZE} characters long.`
       ); // TODO: better errors
 
-    this.owner.setDynamicProperty(key, encodedValue);
+    this.setEncoded(key, encodedValue);
   }
 
   // update<T = unknown>(
@@ -90,6 +135,7 @@ export class Document {
   }
 }
 
+/** The world document. */
 export const worldDocument = Document.from(world);
 
 // Remove entities from the instance cache once they have been removed from the world to prevent a memory leak
