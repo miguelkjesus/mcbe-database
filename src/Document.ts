@@ -19,7 +19,10 @@ export class Document {
   }
 
   static from(owner: World | Entity): Document {
-    if (owner instanceof World) return worldDocument;
+    if (owner instanceof World) {
+      if (worldDocument !== undefined) return worldDocument;
+      else return new this(owner);
+    }
 
     let document = ownerIdDocumentMap.get(owner.id);
     if (document === undefined) {
