@@ -4,8 +4,6 @@ function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// TODO: add value splitting across multiple keys to store large values
-
 let ownerIdDocumentMap = new Map<string, Document>();
 
 export class Document {
@@ -73,6 +71,11 @@ export class Document {
     }
   }
 
+  get<T = unknown>(key: string): T | undefined;
+  get<T = unknown>(
+    key: string,
+    decoder?: (encodedValue: string) => T
+  ): T | undefined;
   get<T = unknown>(
     key: string,
     decoder?: (encodedValue: string) => T
@@ -89,6 +92,8 @@ export class Document {
     ); // TODO: better errors
   }
 
+  set<T = unknown>(key: string, value: T): void;
+  set<T = unknown>(key: string, value: T, encoder?: (value: T) => string): void;
   set<T = unknown>(
     key: string,
     value: T,
@@ -109,15 +114,6 @@ export class Document {
     this.setEncoded(key, encodedValue);
   }
 
-  // update<T = unknown>(
-  //   key: string,
-  //   transform: (old: T | undefined) => T,
-  //   encoder?: (value: T) => string,
-  //   decoder?: (encodedValue: string) => T
-  // ): void {
-  //   this.set(key, transform(this.get<T>(key, decoder)), encoder);
-  // }
-
   has(key: string): boolean {
     let value = this.owner.getDynamicProperty(key);
     return value !== undefined && typeof value === "string";
@@ -131,6 +127,20 @@ export class Document {
     for (let id of this.owner.getDynamicPropertyIds()) {
       let value = this.owner.getDynamicProperty(id);
       if (typeof value === "string") yield id;
+    }
+  }
+
+  *values(): IterableIterator<unknown> {
+    for (let id of this.owner.getDynamicPropertyIds()) {
+      let value = this.owner.getDynamicProperty(id);
+      if (typeof value === "string") yield value;
+    }
+  }
+
+  *entries(): IterableIterator<[string, unknown]> {
+    for (let id of this.owner.getDynamicPropertyIds()) {
+      let value = this.owner.getDynamicProperty(id);
+      if (typeof value === "string") yield [value, id];
     }
   }
 }
