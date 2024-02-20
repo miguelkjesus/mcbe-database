@@ -9,13 +9,10 @@ let ownerIdDocumentMap = new Map<string, Document>();
 export class Document {
   static readonly MAX_DYNAMIC_PROPERTY_SIZE = 32767;
 
-  private _owner: World | Entity;
-  get owner(): World | Entity {
-    return this._owner;
-  }
+  readonly owner: World | Entity;
 
   protected constructor(owner: World | Entity) {
-    this._owner = owner;
+    this.owner = owner;
   }
 
   static from(owner: World | Entity): Document {
