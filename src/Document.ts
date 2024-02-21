@@ -1,24 +1,43 @@
 import { Entity, World, world } from "@minecraft/server";
 
+// --- utils ---
+
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+type StringKeyOf<T> = Extract<keyof T, string>;
+
+// --- implementation ---
+
+/** A cache for document instances for each entity. */
 let ownerIdDocumentMap = new Map<string, Document>();
 
-export class Document {
+/** Handles the modification of dynamic properties. */
+export class Document<
+  T extends { [key: string]: any } = { [key: string]: unknown }
+> {
+  /** The maximum length of a single dynamic property. Document values are not limited to this length. */
   static readonly MAX_DYNAMIC_PROPERTY_SIZE = 32767;
 
+  /** The entity or world whose dynamic properties are being accessed. */
   readonly owner: World | Entity;
 
   protected constructor(owner: World | Entity) {
     this.owner = owner;
   }
 
-  static from(owner: World | Entity): Document {
+  /**
+   * Gets the document for a world or entity or creates it if it didn't already exist.
+   * @param owner The entity or world you would like to get the document for.
+   * @returns The world or entity's document.
+   */
+  static from<T extends { [key: string]: any } = { [key: string]: unknown }>(
+    owner: World | Entity
+  ): Document<T> {
     if (owner instanceof World) {
-      if (worldDocument !== undefined) return worldDocument;
-      else return new this(owner);
+      if (worldDocument === undefined) return new this<T>(owner);
+      return worldDocument as unknown as Document<T>;
     }
 
     let document = ownerIdDocumentMap.get(owner.id);
@@ -27,10 +46,14 @@ export class Document {
       ownerIdDocumentMap.set(owner.id, document);
     }
 
-    return document;
+    return document as unknown as Document<T>;
   }
 
-  private setEncoded(key: string, encodedValue: string): void {
+  private setEncoded(key: StringKeyOf<T>, encodedValue: string): void {
+    // delete it first since if the value is smaller than the last set value,
+    // some chunks may not be overwritten and may be forgotten.
+    this.delete(key);
+
     let chunkStart = 0;
     let chunkEnd = 0;
     let chunkId = 0;
@@ -50,7 +73,7 @@ export class Document {
     }
   }
 
-  private getChunkIds(key: string): string[] {
+  private getChunkIds(key: StringKeyOf<T>): string[] {
     let escapedKey = escapeRegExp(key);
     let keyPattern = new RegExp(`^${escapedKey}_\\d+$`);
     return this.owner
@@ -58,7 +81,7 @@ export class Document {
       .filter((propId) => keyPattern.test(propId));
   }
 
-  private getEncoded(key: string): string | undefined {
+  private getEncoded(key: StringKeyOf<T>): string | undefined {
     let ids = this.getChunkIds(key);
 
     if (ids.length === 0) {
@@ -71,77 +94,100 @@ export class Document {
     }
   }
 
-  get<T = unknown>(key: string): T | undefined;
-  get<T = unknown>(
-    key: string,
-    decoder?: (encodedValue: string) => T
-  ): T | undefined;
-  get<T = unknown>(
-    key: string,
-    decoder?: (encodedValue: string) => T
-  ): T | undefined {
+  /**
+   * Returns the value associated with a key.
+   * @param key The key to get the value of.
+   */
+  get<K extends StringKeyOf<T>>(
+    key: K,
+    decoder?: (encodedValue: string, key: K) => T[K]
+  ): T[K] | undefined {
     const encodedValue = this.getEncoded(key);
 
     if (encodedValue === undefined) return undefined;
 
     if (typeof encodedValue === "string")
-      return (decoder ?? JSON.parse)(encodedValue);
+      return decoder?.(encodedValue, key) ?? JSON.parse(encodedValue);
 
     throw new Error(
       `Expected a string value from a dynamic property. Recieved ${typeof encodedValue}`
     ); // TODO: better errors
   }
 
-  set<T = unknown>(key: string, value: T): void;
-  set<T = unknown>(key: string, value: T, encoder?: (value: T) => string): void;
-  set<T = unknown>(
-    key: string,
-    value: T,
-    encoder?: (value: T) => string
+  /**
+   * Sets the value of a key.
+   * @param key The key to set the value of.
+   * @param value The value that will be set to the key.
+   */
+  set<K extends StringKeyOf<T>>(
+    key: K,
+    value: T[K],
+    encoder?: (value: T[K], key: K) => string
   ): void {
-    const encodedValue = (encoder ?? JSON.stringify)(value);
+    const encodedValue = encoder?.(value, key) ?? JSON.stringify(value);
 
     if (typeof encodedValue !== "string")
       throw new Error(
         `The encoded value must be a string value. Recieved ${typeof encodedValue}`
       ); // TODO: better errors
 
-    if (encodedValue.length > Document.MAX_DYNAMIC_PROPERTY_SIZE)
-      throw new Error(
-        `The encoded value must be less than ${Document.MAX_DYNAMIC_PROPERTY_SIZE} characters long.`
-      ); // TODO: better errors
-
     this.setEncoded(key, encodedValue);
   }
 
-  has(key: string): boolean {
-    let value = this.owner.getDynamicProperty(key);
-    return value !== undefined && typeof value === "string";
-  }
-
-  delete(key: string): void {
-    this.owner.setDynamicProperty(key, undefined);
-  }
-
-  *keys(): IterableIterator<string> {
-    for (let id of this.owner.getDynamicPropertyIds()) {
-      let value = this.owner.getDynamicProperty(id);
-      if (typeof value === "string") yield id;
+  /**
+   * Returns whether the document has the key.
+   * @param key The key to check the existence of.
+   */
+  has(key: StringKeyOf<T>): boolean {
+    let value: unknown;
+    try {
+      value = this.get(key);
+      return value !== undefined;
+    } catch {
+      return false;
     }
   }
 
-  *values(): IterableIterator<unknown> {
-    for (let id of this.owner.getDynamicPropertyIds()) {
-      let value = this.owner.getDynamicProperty(id);
-      if (typeof value === "string") yield value;
+  /**
+   * Removes a key from a document.
+   * @param key The key to remove.
+   */
+  delete(key: StringKeyOf<T>): void {
+    for (let id of this.getChunkIds(key)) {
+      this.owner.setDynamicProperty(id, undefined);
     }
   }
 
-  *entries(): IterableIterator<[string, unknown]> {
+  /**
+   * Returns an iterator which yields every key the document contains.
+   */
+  *keys(): IterableIterator<StringKeyOf<T>> {
+    let keys = new Set<string>();
+
     for (let id of this.owner.getDynamicPropertyIds()) {
-      let value = this.owner.getDynamicProperty(id);
-      if (typeof value === "string") yield [value, id];
+      let idSeperatorIdx = id.lastIndexOf("_");
+      if (idSeperatorIdx === -1) continue;
+
+      let key = id.slice(0, idSeperatorIdx) as StringKeyOf<T>;
+      if (keys.has(key)) continue;
+
+      keys.add(key);
+      yield key;
     }
+  }
+
+  /**
+   * Returns an iterator which yields every value stored within every key the document contains.
+   */
+  *values(): IterableIterator<T[StringKeyOf<T>]> {
+    for (let key of this.keys()) yield this.get(key);
+  }
+
+  /**
+   * Returns an iterator which yields key-value pairs of every entry in the document.
+   */
+  *entries(): IterableIterator<[StringKeyOf<T>, T[StringKeyOf<T>]]> {
+    for (let key of this.keys()) yield [key, this.get(key)];
   }
 }
 
